@@ -185,7 +185,7 @@ logging.basicConfig(level=logging.DEBUG)
 - [ ] Multi-user support with isolated conversation threads
 - [ ] API endpoint for web/mobile integration
 
-
+## Acknowledgements
 - Powered by Google Generative AI (Gemini)
 - Search capabilities provided by Tavily
 - Vector storage powered by Chroma
