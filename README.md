@@ -21,8 +21,8 @@ graph TD
     E --> F[Memory Storage]
     F --> G[Formatted Output]
 
-
-Key Components
+```
+## Key Components
 1. Chroma Vector Database
 Stores conversation history as vector embeddings
 
