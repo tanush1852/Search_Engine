@@ -25,9 +25,9 @@ graph TD
     F --> G[Formatted Output]
     
     style A fill:#50A747,stroke:#333,stroke-width:2px
-    style G fill:#d5f9e5,stroke:#333,stroke-width:2px
-    style D fill:#d5e5f9,stroke:#333,stroke-width:2px
-    style E fill:#f9e5d5,stroke:#333,stroke-width:2px
+    style G fill:##3A7CA5,stroke:#333,stroke-width:2px
+    style D fill:#F28C28,stroke:#333,stroke-width:2px
+    style E fill:#FFD93D,stroke:#333,stroke-width:2px
 ```
 
 ## 🧩 Key Components
@@ -66,8 +66,7 @@ graph TD
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/conversational-research-assistant.git
-cd conversational-research-assistant
+git clone https://github.com/tanush1852/Search_Engine.git
 
 # Create and activate virtual environment (optional but recommended)
 python -m venv venv
@@ -84,10 +83,29 @@ Create a `.env` file in the project root:
 ```ini
 GOOGLE_API_KEY=your_google_api_key
 TAVILY_API_KEY=your_tavily_api_key
-DEVELOPMENT_MODE=True  # Set to False for production
 ```
 
-### Running the Assistant
+## 🚀 Running the Assistant
+
+### Option 1: Streamlit Web Interface
+
+For an interactive web-based interface:
+
+```bash
+streamlit run research_streamlit.py
+```
+
+This launches a user-friendly web app where you can interact with the research assistant through your browser.
+
+### Option 2: Python Script
+
+For programmatic usage or integration into other applications:
+
+```bash
+python research_system.py
+```
+
+#### Example Code Usage
 
 ```python
 from research_assistant import agent_executor
@@ -140,42 +158,6 @@ SEARCH_RESULTS = 3          # Number of web search results to retrieve
 DEVELOPMENT_MODE = True     # Clear DB on startup when True
 ```
 
-### Vector Database Options
-
-To persist memory between runs in production:
-
-```python
-# In main.py
-if not DEVELOPMENT_MODE:
-    # Use existing DB if available
-    vectorstore = Chroma(
-        collection_name="research_assistant",
-        embedding_function=GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    )
-else:
-    # Development mode - fresh DB each time
-    setup_chroma()
-```
-
-### Search Configuration
-
-Modify search behavior in `search_service.py`:
-
-```python
-def perform_search(query, max_results=SEARCH_RESULTS):
-    """
-    Customizable search function
-    
-    Args:
-        query: The search query
-        max_results: Number of results to return
-        
-    Returns:
-        List of search results with source attribution
-    """
-    # Implementation details...
-```
-
 ## 🔧 Troubleshooting
 
 ### Common Issues
@@ -216,4 +198,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by [Your Name/Organization]**
+**By [Tanush Salian]**
