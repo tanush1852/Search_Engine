@@ -2,7 +2,7 @@
 
 A powerful, stateful AI assistant that combines conversation memory, web search, and generative AI to provide informed, source-attributed responses to complex research questions.
 
-![Research Assistant Demo](https://via.placeholder.com/800x400?text=Research+Assistant+Demo)
+
 
 ## ✨ Features
 
@@ -24,7 +24,7 @@ graph TD
     E --> F[Memory Storage]
     F --> G[Formatted Output]
     
-    style A fill:#f9d5e5,stroke:#333,stroke-width:2px
+    style A fill:#50A747,stroke:#333,stroke-width:2px
     style G fill:#d5f9e5,stroke:#333,stroke-width:2px
     style D fill:#d5e5f9,stroke:#333,stroke-width:2px
     style E fill:#f9e5d5,stroke:#333,stroke-width:2px
