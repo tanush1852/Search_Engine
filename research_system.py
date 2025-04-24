@@ -1,310 +1,222 @@
-# research_system.py - Optimized for Free Gemini API Tier
-
-from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_community.tools import TavilySearchResults
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_chroma import Chroma
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-import json
+from langgraph.graph import StateGraph
+from langchain_community.vectorstores import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_core.documents import Document
+from langchain_community.tools.tavily_search.tool import TavilySearchResults
+from langchain_google_genai import ChatGoogleGenerativeAI
+from dotenv import load_dotenv
 import os
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Tuple
-from dataclasses import dataclass, field
-from dotenv import load_dotenv
-import logging
+import shutil
+import chromadb
 
-# Initialize logging
-logging.basicConfig(filename='research_system.log', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-load_dotenv()
-
-# ======================
-# Free Tier Quota Limits
-# ======================
-class FreeTierQuotaManager:
-    def __init__(self):
-        self.reset_limits()
-        
-    def reset_limits(self):
-        self.last_call_time = None
-        self.daily_count = 0
-        self.daily_limit = 20  # Conservative free tier limit (60/day)
-        self.min_call_interval = 5.0  # 5s between calls
-        self.total_tokens = 0
-        self.token_limit = 10000  # ~30k tokens/day
-    
-    def check_quota(self, estimated_tokens=50):
-        """Strict quota checks for free tier"""
-        now = datetime.now()
-        
-        # Daily reset
-        if self.last_call_time and now.date() > self.last_call_time.date():
-            self.reset_limits()
-            logger.info("Daily quota reset")
-        
-        # Hard limits
-        if self.daily_count >= self.daily_limit:
-            raise Exception(f"Daily limit reached ({self.daily_count}/{self.daily_limit})")
-            
-        if self.total_tokens + estimated_tokens > self.token_limit:
-            raise Exception(f"Token limit ({self.total_tokens}/{self.token_limit})")
-        
-        # Rate limiting
-        if self.last_call_time:
-            elapsed = (now - self.last_call_time).total_seconds()
-            if elapsed < self.min_call_interval:
-                wait_time = self.min_call_interval - elapsed
-                logger.info(f"Waiting {wait_time:.1f}s")
-                time.sleep(wait_time)
-        
-        self.last_call_time = now
-        self.daily_count += 1
-        self.total_tokens += estimated_tokens
-        logger.info(f"Quota: Calls {self.daily_count}, Tokens {self.total_tokens}")
-
-# Initialize quota manager
-quota_manager = FreeTierQuotaManager()
-
-# ======================
-# Model Configuration
-# ======================
-gemini_flash = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    temperature=0.2,
-    max_retries=1,
-    retry_min_seconds=30,
-    retry_max_seconds=60
-)
-
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
-# Initialize Vector Database
-vector_db = Chroma(embedding_function=embeddings, collection_name="research_data")
-
-# Search Configuration
-search_tool = TavilySearchResults(k=1, max_tokens=1000)  # Minimal search results
-
-# ======================
-# State Definition
-# ======================
-@dataclass
-class AgentState:
-    query: str
-    research_plan: List[str] = field(default_factory=list)
-    search_results: List[Dict] = field(default_factory=list)
-    processed_data: Dict = field(default_factory=dict)
-    verified_facts: List[Dict] = field(default_factory=dict)
-    draft: str = ""
-    final_answer: str = ""
-
-# ======================
-# Optimized Agents
-# ======================
-def controller_agent(state: AgentState) -> Dict:
-    """Simplified workflow controller"""
-    try:
-        if not state.research_plan:
-            return {"next": "research_planner"}
-        elif not state.search_results:
-            return {"next": "research_agent"}
-        elif not state.processed_data:
-            return {"next": "processing_agent"}
-        else:
-            state.final_answer = generate_final_output(state)
-            return {"next": END}
-    except Exception as e:
-        logger.error(f"Controller error: {str(e)}")
-        state.final_answer = f"Research error: {str(e)}"
-        return {"next": END}
-
-def research_planner(state: AgentState) -> Dict:
-    """Generate 2 research questions max"""
-    prompt = ChatPromptTemplate.from_template(
-        "Generate 2 research questions about: {query}. Respond ONLY as JSON list."
-    )
-    
-    try:
-        chain = prompt | gemini_flash | JsonOutputParser()
-        state.research_plan = safe_invoke(
-            chain,
-            {"query": state.query[:150]},
-            agent_name="planner",
-            max_tokens=100
-        )[:2]  # Force limit
-    except:
-        state.research_plan = [
-            f"What is the current state of {state.query}?",
-            f"What are key challenges in {state.query}?"
-        ]
-    
-    return {"next": "controller_agent"}
-
-def research_agent(state: AgentState) -> Dict:
-    """Perform limited search operations"""
-    results = []
-    
-    for question in state.research_plan[:2]:  # Max 2 questions
+# Function to clear and recreate Chroma DB directory
+def setup_chroma():
+    chroma_dir = "./chroma_db2"
+    if os.path.exists(chroma_dir):
         try:
-            quota_manager.check_quota(estimated_tokens=50)
-            search_result = search_tool.invoke(question)[0]
-            results.append({
-                "question": question,
-                "content": search_result.get("content", "")[:250],
-                "source": search_result.get("source", "")
-            })
+            shutil.rmtree(chroma_dir)
+            time.sleep(1)  # Wait for cleanup to complete
         except Exception as e:
-            logger.warning(f"Search failed: {str(e)}")
-            continue
-    
-    state.search_results = results
-    return {"next": "controller_agent"}
+            print(f"Warning: Could not clear Chroma DB directory: {e}")
+    os.makedirs(chroma_dir, exist_ok=True)
+    return chroma_dir
 
-def processing_agent(state: AgentState) -> Dict:
-    """Consolidate and process data"""
-    if not state.search_results:
-        state.processed_data = {"summary": "No results found"}
-        return {"next": "controller_agent"}
-    
+# Set API keys
+load_dotenv('.env')
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+# Initialize Chroma DB with error handling
+def initialize_vectorstore():
     try:
-        prompt = ChatPromptTemplate.from_template(
-            "Summarize this in 3 bullet points:\n{data}\nRespond with JSON: {{'summary': '...'}}"
-        )
+        # Setup Chroma directory
+        chroma_dir = setup_chroma()
         
-        chain = prompt | gemini_flash | JsonOutputParser()
-        content = "\n".join([r["content"] for r in state.search_results])
+        # Initialize embeddings
+        embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         
-        state.processed_data = safe_invoke(
-            chain,
-            {"data": content[:1000]},
-            agent_name="processor",
-            max_tokens=200
+        # Create initial document
+        initial_docs = [Document(page_content="Initial document to create vectorstore")]
+        
+        # Create new Chroma client with explicit settings
+        client = chromadb.PersistentClient(path=chroma_dir)
+        
+        # Initialize vectorstore
+        vectorstore = Chroma.from_documents(
+            documents=initial_docs,
+            embedding=embedding_model,
+            client=client,
+            collection_name="research_memories"
         )
+        return vectorstore
     except Exception as e:
-        logger.error(f"Processing failed: {str(e)}")
-        state.processed_data = {"summary": "Data processing error"}
-    
-    return {"next": "controller_agent"}
-
-def generate_final_output(state: AgentState) -> str:
-    """Generate final answer with fallbacks"""
-    try:
-        prompt = ChatPromptTemplate.from_template(
-            "Create 150-word answer about {query} using: {data}"
-        )
-        
-        chain = prompt | gemini_flash
-        response = safe_invoke(
-            chain,
-            {
-                "query": state.query,
-                "data": state.processed_data.get("summary", "")
-            },
-            max_tokens=300
-        )
-        
-        return response.content[:500]  # Hard length limit
-    except:
-        return "Could not generate final answer due to system limits"
-
-# ======================
-# Core Utilities
-# ======================
-def safe_invoke(chain, input_data, max_tokens=50, agent_name=""):
-    """Protected LLM invocation"""
-    try:
-        quota_manager.check_quota(estimated_tokens=max_tokens)
-        logger.info(f"Invoking {agent_name}")
-        
-        # Input sanitization
-        if isinstance(input_data, dict):
-            for k in input_data:
-                if isinstance(input_data[k], str):
-                    input_data[k] = input_data[k][:500]
-        
-        start = time.time()
-        result = chain.invoke(input_data)
-        logger.info(f"{agent_name} completed in {time.time()-start:.1f}s")
-        
-        return result
-    except Exception as e:
-        logger.error(f"{agent_name} failed: {str(e)}")
-        if "quota" in str(e).lower():
-            time.sleep(60)  # Extended backoff
+        print(f"Error initializing vectorstore: {e}")
         raise
 
-# ======================
-# Workflow Setup
-# ======================
-def build_workflow():
-    workflow = StateGraph(AgentState)
-    
-    workflow.add_node("controller_agent", controller_agent)
-    workflow.add_node("research_planner", research_planner)
-    workflow.add_node("research_agent", research_agent)
-    workflow.add_node("processing_agent", processing_agent)
-    
-    workflow.add_edge("controller_agent", "research_planner")
-    workflow.add_edge("research_planner", "controller_agent")
-    workflow.add_edge("controller_agent", "research_agent")
-    workflow.add_edge("research_agent", "controller_agent")
-    workflow.add_edge("controller_agent", "processing_agent")
-    workflow.add_edge("processing_agent", "controller_agent")
-    
-    workflow.set_entry_point("controller_agent")
-    return workflow.compile()
+try:
+    vectorstore = initialize_vectorstore()
+except Exception as e:
+    print(f"Failed to initialize vectorstore: {e}")
+    exit(1)
 
-# ======================
-# Execution
-# ======================
-def run_research(query):
-    """Run with strict free tier limits"""
-    state = AgentState(query=query[:100])
-    
-    try:
-        system = build_workflow()
-        result = None
-        
-        for step in system.stream(state):
-            if END in step:
-                result = step[END]
-                break
-            
-            # Enforce step limits
-            if quota_manager.daily_count >= 55:  # Leave 5-call buffer
-                raise Exception("Approaching daily limit")
-            
-            time.sleep(5)  # Conservative pacing
-        
-        return {
-            "answer": result.final_answer,
-            "sources": [r["source"] for r in result.search_results],
-            "calls_used": quota_manager.daily_count,
-            "tokens_used": quota_manager.total_tokens
-        }
-    except Exception as e:
-        return {
-            "answer": f"Research incomplete: {str(e)}",
-            "error": True,
-            "calls_used": quota_manager.daily_count
-        }
+# Conversation history storage
+conversation_history = []
+last_query_time = 0
+CONVERSATION_TIMEOUT = 300  # 5 minutes
 
+# Tavily search tool
+search_tool = TavilySearchResults()
+
+# Gemini LLM
+gemini = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+
+# Define state schema
+class State(dict):
+    """State for the agent."""
+    user_input: str
+    convo_context: str = ""
+    memory_context: str = ""
+    search_results: str = ""
+    search_sources: str = ""
+    answer: str = ""
+    final_output: str = ""
+
+# [Rest of your code remains exactly the same from Node definitions onward...]
+# Node: Add Conversation Context
+def convo_context_node(state):
+    global conversation_history, last_query_time
+    current_time = time.time()
+    
+    if current_time - last_query_time > CONVERSATION_TIMEOUT:
+        conversation_history = []
+    
+    last_query_time = current_time
+    conversation_history.append({"role": "user", "content": state["user_input"]})
+    
+    recent_history = conversation_history[-10:]
+    context = "\n".join([f"{'User' if item['role'] == 'user' else 'Assistant'}: {item['content']}" 
+                        for item in recent_history])
+    
+    return {"convo_context": context}
+
+# Node: Memory Retrieval
+def memory_node(state):
+    query = state["user_input"]
+    docs = vectorstore.similarity_search(query, k=3)
+    
+    if docs and docs[0].page_content != "Initial document to create vectorstore":
+        memory_context = "\n".join([f"Memory {i+1}: {doc.page_content}" for i, doc in enumerate(docs)])
+    else:
+        memory_context = ""
+    
+    return {"memory_context": memory_context}
+
+# Node: Web Search
+def search_node(state):
+    results = search_tool.invoke({"query": state["user_input"]})
+    
+    search_results = "\n".join([f"Result {i+1}: {res['content']}" for i, res in enumerate(results[:3])])
+    
+    search_sources = "\n".join(
+        [f"Source {i+1}: {res.get('title', 'Untitled')} - {res.get('url', 'No URL available')}" 
+         for i, res in enumerate(results[:3])]
+    )
+    
+    return {
+        "search_results": search_results,
+        "search_sources": search_sources
+    }
+
+# Node: Generate Answer with Gemini
+def gemini_node(state):
+    query = state["user_input"]
+    conversation = state.get("convo_context", "")
+    memory = state.get("memory_context", "")
+    search = state.get("search_results", "")
+    sources = state.get("search_sources", "")
+
+    prompt = f"""
+You are a helpful conversational research assistant.
+
+Answer the following question using the conversation context, memory from previous interactions, and search results.
+Format your response in a clear, pointwise manner (using bullet points) whenever appropriate.
+Include information about which source was used for each point by referencing the source number.
+Your answer should be conversational but informative.
+
+Recent Conversation:
+{conversation}
+
+Question:
+{query}
+
+{('Relevant Memory from Previous Conversations:\n' + memory) if memory else ''}
+
+Search Results:
+{search}
+
+Sources:
+{sources}
+
+Instructions:
+1. Answer in a bullet-point format when presenting multiple pieces of information
+2. For each major point, mention which source it came from (e.g., "According to Source 1...")
+3. Be conversational but informative
+4. Present information in a logical order
+"""
+
+    response = gemini.invoke(prompt)
+    
+    conversation_history.append({"role": "assistant", "content": response.content})
+    final_output = f"{response.content}\n\nSources:\n{sources}"
+    
+    return {
+        "answer": response.content,
+        "final_output": final_output
+    }
+
+# Node: Store Memory
+def store_memory(state):
+    content_to_store = f"Q: {state['user_input']}\nA: {state['answer']}"
+    doc = Document(page_content=content_to_store, metadata={"timestamp": time.time()})
+    vectorstore.add_documents([doc])
+    return {}
+
+# Create and configure the graph
+workflow = StateGraph(State)
+
+# Add all nodes to the graph
+workflow.add_node("context_handler", convo_context_node)
+workflow.add_node("memory", memory_node)
+workflow.add_node("search", search_node)
+workflow.add_node("gemini", gemini_node)
+workflow.add_node("store", store_memory)
+
+# Set the entry point
+workflow.set_entry_point("context_handler")
+
+# Add edges
+workflow.add_edge("context_handler", "memory")
+workflow.add_edge("memory", "search")
+workflow.add_edge("search", "gemini")
+workflow.add_edge("gemini", "store")
+
+# Set the final node as the end node
+workflow.set_finish_point("store")
+
+# Compile the workflow
+agent_executor = workflow.compile()
+
+# Example usage
 if __name__ == "__main__":
-    try:
-        query = "What are the impacts of quantum computing on cybersecurity?"
-        print(f"Starting research: {query}")
-        
-        result = run_research(query)
-        
-        print("\nResearch Results:")
-        print(f"API Calls Used: {result['calls_used']}/60")
-        print(f"Final Answer:\n{result['answer']}")
-        
-        with open("research_output.json", "w") as f:
-            json.dump(result, f)
-            
-    except Exception as e:
-        print(f"System error: {str(e)}")
+    # First query
+    result1 = agent_executor.invoke({"user_input": "why is obesity increasing worldwide?"})
+    print(result1["final_output"])
+    
+    # Follow-up query
+    result2 = agent_executor.invoke({"user_input": "what are the main contributing factors?"})
+    print(result2["final_output"])
+    
+    # Another follow-up
+    result3 = agent_executor.invoke({"user_input": "which countries are most affected?"})
+    print(result3["final_output"])
