@@ -185,11 +185,6 @@ logging.basicConfig(level=logging.DEBUG)
 - [ ] Multi-user support with isolated conversation threads
 - [ ] API endpoint for web/mobile integration
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgements
 
 - Powered by Google Generative AI (Gemini)
 - Search capabilities provided by Tavily
