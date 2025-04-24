@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtualenvs
+venv/Lib
+venv/Scripts
+venv/
+
+
+# ChromaDB
+chroma_db/
+chroma_db2/
+
+# Environment files
+env/
+.envrc
+.env/
+.env
+.env.local
+
+
+# IDE
+.vscode/
+.idea/
+
+.gitignore/
