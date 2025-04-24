@@ -27,7 +27,7 @@ graph TD
     style A fill:#50A747,stroke:#333,stroke-width:2px
     style G fill:##3A7CA5,stroke:#333,stroke-width:2px
     style D fill:#F28C28,stroke:#333,stroke-width:2px
-    style E fill:#FFD93D,stroke:#333,stroke-width:2px
+    style E fill:#B8860B,stroke:#333,stroke-width:2px
 ```
 
 ## 🧩 Key Components
